@@ -60,7 +60,7 @@ done
     "${BINARY_ARGS[@]}" \
     "$ROOT/fat32_image_editor.py"
 
-APP_VERSION="${APP_VERSION:-1.0.1}"
+APP_VERSION="${APP_VERSION:-1.0.2}"
 PLIST="$APP_PATH/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $APP_VERSION" "$PLIST"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $APP_VERSION" "$PLIST" 2>/dev/null \
