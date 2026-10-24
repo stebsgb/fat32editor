@@ -2,6 +2,8 @@
 
 A small Tkinter desktop app for browsing and editing files inside a FAT32 disk image (such as a CSpect / ZX Spectrum Next SD card image) without mounting it. It drives the [mtools](https://www.gnu.org/software/mtools/) utilities under the hood.
 
+![FAT32 Image Editor window showing the folder and file lists and the action bar](docs/screenshot.png)
+
 ## Supported platform
 
 - **macOS only** (Apple Silicon, with Homebrew at `/opt/homebrew`). The build script, app bundle, icon generation and preference storage all use macOS-specific tools and paths.
