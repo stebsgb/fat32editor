@@ -60,5 +60,11 @@ done
     "${BINARY_ARGS[@]}" \
     "$ROOT/fat32_image_editor.py"
 
+APP_VERSION="${APP_VERSION:-1.0.1}"
+PLIST="$APP_PATH/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $APP_VERSION" "$PLIST"
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $APP_VERSION" "$PLIST" 2>/dev/null \
+    || /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string $APP_VERSION" "$PLIST"
+
 codesign --force --deep --sign - "$APP_PATH"
 echo "Built: $APP_PATH"
