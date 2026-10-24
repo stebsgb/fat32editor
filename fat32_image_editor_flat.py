@@ -50,6 +50,7 @@ class FAT32Editor:
         self.root = root
         self.root.title("FAT32 Image Editor")
         self.root.geometry("1000x650")
+        self.root.minsize(780, 320)
         self.image = DEFAULT_IMAGE
         self.folder = "/"
         self.undo_action = None
@@ -112,18 +113,28 @@ class FAT32Editor:
             style="FolderHeading.TLabel"
         ).pack(anchor="w", pady=(0, 5))
 
+        folder_frame = ttk.Frame(left, style="FolderPanel.TFrame")
+        folder_frame.pack(fill="both", expand=True)
+
         self.folders = tk.Listbox(
-            left, width=27, height=22, exportselection=False,
+            folder_frame, width=27, height=5, exportselection=False,
             selectmode=tk.EXTENDED,
             **self.list_colors
         )
-        self.folders.pack(fill="both", expand=True)
+        self.folders.pack(side="left", fill="both", expand=True)
+        folder_scrollbar = ttk.Scrollbar(
+            folder_frame, orient="vertical", command=self.folders.yview
+        )
+        folder_scrollbar.pack(side="right", fill="y")
+        self.folders.config(yscrollcommand=folder_scrollbar.set)
         self.folders.bind("<Double-Button-1>", self.open_folder)
 
         folder_buttons = ttk.Frame(
             left, style="FolderPanel.TFrame"
         )
-        folder_buttons.pack(fill="x", pady=(6, 0))
+        folder_buttons.pack(
+            fill="x", pady=(6, 0), side="bottom", before=folder_frame
+        )
 
         ttk.Button(
             folder_buttons, text="＋ New Folder…",
@@ -154,7 +165,7 @@ class FAT32Editor:
 
         self.files = tk.Listbox(
             file_frame,
-            height=22,
+            height=5,
             exportselection=False,
             selectmode=tk.EXTENDED,
             **self.list_colors
@@ -168,7 +179,9 @@ class FAT32Editor:
         self.files.config(yscrollcommand=scrollbar.set)
 
         file_buttons = ttk.Frame(right, style="FilePanel.TFrame")
-        file_buttons.pack(fill="x", pady=(6, 0))
+        file_buttons.pack(
+            fill="x", pady=(6, 0), side="bottom", before=file_frame
+        )
 
         ttk.Button(
             file_buttons, text="✎ Rename File…",
@@ -180,7 +193,6 @@ class FAT32Editor:
             padding=(10, 8, 10, 10),
             style="ActionBar.TFrame"
         )
-        buttons.pack(fill="x")
 
         ttk.Button(
             buttons, text="↑ Up", command=self.go_up
@@ -211,7 +223,8 @@ class FAT32Editor:
         ).pack(side="right")
 
         self.status = ttk.Label(root, text="Ready", padding=10)
-        self.status.pack(fill="x")
+        self.status.pack(fill="x", side="bottom", before=main)
+        buttons.pack(fill="x", side="bottom", before=main)
 
         self.image = self.load_last_image()
         self.update_image_label()

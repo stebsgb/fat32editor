@@ -48,7 +48,7 @@ The interface follows the macOS light/dark appearance.
 
 ## Download
 
-Grab `FAT32-Image-Editor-macOS.zip` from the [Releases](https://github.com/stebsgb/fat32editor/releases) page, unzip it and drag **FAT32 Image Editor.app** into Applications.
+Grab `FAT32-Image-Editor-macOS-<version>.zip` from the [Releases](https://github.com/stebsgb/fat32editor/releases) page, unzip it and drag **FAT32 Image Editor.app** into Applications.
 
 The app is not notarized by Apple (that needs a paid Apple Developer account), so macOS will block the first launch. Either:
 
