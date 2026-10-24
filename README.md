@@ -24,6 +24,22 @@ A small Tkinter desktop app for browsing and editing files inside a FAT32 disk i
 - macOS with Python 3.13 (Tkinter included)
 - mtools: `brew install mtools`
 
+## Download
+
+Grab `FAT32-Image-Editor-macOS.zip` from the [Releases](https://github.com/stebsgb/fat32editor/releases) page, unzip it and drag **FAT32 Image Editor.app** into Applications.
+
+The app is not notarized by Apple (that needs a paid Apple Developer account), so macOS will block the first launch. Either:
+
+- Right-click (or Control-click) the app, choose **Open**, then click **Open** again; or
+- Open **System Settings → Privacy & Security**, scroll down and click **Open Anyway**; or
+- Remove the quarantine flag in Terminal:
+
+  ```bash
+  xattr -dr com.apple.quarantine "/Applications/FAT32 Image Editor.app"
+  ```
+
+The release build is for Apple Silicon Macs.
+
 ## Run from source
 
 ```bash
