@@ -14,10 +14,30 @@ A small Tkinter desktop app for browsing and editing files inside a FAT32 disk i
 
 ## Features
 
-- Browse folders and files in the image
-- Add files and whole folders
-- Create, rename and delete folders and files
-- Undo, refresh, and open the image's folder in Finder
+**Image**
+- **Choose Image…** selects the `.img` file to edit (the choice is remembered; prompted if the default is missing)
+- **Open Image Folder** reveals the image's folder in Finder
+
+**Navigation**
+- Double-click a folder in the left-hand **Folders** list to open it
+- **Up** moves to the parent folder; the current location is shown above the file list
+- **Refresh** reloads the listing from the image
+
+**Folders** (left panel)
+- **New Folder…** creates a folder in the current location
+- **Rename Folder…** renames the selected folder
+- **Delete Folder** deletes the selected folder and its contents (with confirmation)
+
+**Files** (right panel, multi-select supported)
+- **Add Files…** copies one or more files from your Mac into the current folder. You can optionally enter a name to create a new destination folder first
+- **Add Folder…** copies an entire folder from your Mac, including its contents, into the image
+- **Rename File…** renames the selected file
+- **Delete Selected File(s)** deletes the selected files (with confirmation)
+
+**Undo**
+- **Undo** reverts the most recent change (single level). Undo is cleared when you switch images
+
+Names are checked for FAT32 validity, and existing names are never silently overwritten.
 
 ## Requirements
 
