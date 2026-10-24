@@ -187,11 +187,7 @@ class UndoMixin:
                     f"Neither '{source}' nor '{destination}' exists."
                 )
 
-            result = self.run_mtools(
-                "mren",
-                self.image_path_argument(source),
-                self.image_path_argument(destination)
-            )
+            result = self.rename_image_entry(source, destination)
             return None if result.returncode == 0 else self.error_text(result)
 
         return f"Unknown undo operation: {kind}"

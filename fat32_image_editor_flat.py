@@ -3,7 +3,30 @@ import subprocess
 import sys
 import tempfile
 import tkinter as tk
+import uuid
 from tkinter import ttk, filedialog, messagebox, simpledialog
+
+
+def is_dark_mode():
+    try:
+        result = subprocess.run(
+            ["defaults", "read", "-g", "AppleInterfaceStyle"],
+            capture_output=True, text=True, timeout=5
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.stdout.strip().lower() == "dark"
+
+
+# Tk's folder dialog picks one folder only; this allows several.
+CHOOSE_FOLDERS_SCRIPT = """
+set chosen to choose folder with prompt "Choose folders to add" with multiple selections allowed
+set output to ""
+repeat with item_ in chosen
+    set output to output & POSIX path of item_ & linefeed
+end repeat
+return output
+"""
 
 DEFAULT_IMAGE = os.path.expanduser(
     "~/.jnext/sdcard/cspect-next-1gb-fixed.img"
@@ -32,29 +55,36 @@ class FAT32Editor:
         self.undo_action = None
         self.undo_tempdir = None
 
+        dark = is_dark_mode()
+        folder_bg, file_bg, bar_bg, folder_fg, file_fg, list_bg, list_fg = (
+            ("#2b3440", "#262c33", "#20262c", "#e6edf3", "#e6edf3",
+             "#1e2329", "#e6edf3")
+            if dark else
+            ("#eaf2f8", "#f2f4f6", "#e4ebf1", "#18344d", "#253747",
+             "#ffffff", "#000000")
+        )
+        self.list_colors = {
+            "background": list_bg,
+            "foreground": list_fg,
+            "selectbackground": "#3b6ea5" if dark else "#c5dcf2",
+            "selectforeground": "#ffffff" if dark else "#000000",
+            "highlightthickness": 0
+        }
+
         style = ttk.Style(root)
-        style.configure(
-            "FolderPanel.TFrame",
-            background="#eaf2f8"
-        )
-        style.configure(
-            "FilePanel.TFrame",
-            background="#f2f4f6"
-        )
-        style.configure(
-            "ActionBar.TFrame",
-            background="#e4ebf1"
-        )
+        style.configure("FolderPanel.TFrame", background=folder_bg)
+        style.configure("FilePanel.TFrame", background=file_bg)
+        style.configure("ActionBar.TFrame", background=bar_bg)
         style.configure(
             "FolderHeading.TLabel",
-            background="#eaf2f8",
-            foreground="#18344d",
+            background=folder_bg,
+            foreground=folder_fg,
             font=("TkDefaultFont", 10, "bold")
         )
         style.configure(
             "FileHeading.TLabel",
-            background="#f2f4f6",
-            foreground="#253747",
+            background=file_bg,
+            foreground=file_fg,
             font=("TkDefaultFont", 10, "bold")
         )
 
@@ -83,7 +113,9 @@ class FAT32Editor:
         ).pack(anchor="w", pady=(0, 5))
 
         self.folders = tk.Listbox(
-            left, width=27, height=22, exportselection=False
+            left, width=27, height=22, exportselection=False,
+            selectmode=tk.EXTENDED,
+            **self.list_colors
         )
         self.folders.pack(fill="both", expand=True)
         self.folders.bind("<Double-Button-1>", self.open_folder)
@@ -101,11 +133,6 @@ class FAT32Editor:
         ttk.Button(
             folder_buttons, text="✎ Rename Folder…",
             command=self.rename_folder
-        ).pack(fill="x", pady=2)
-
-        ttk.Button(
-            folder_buttons, text="− Delete Folder",
-            command=self.delete_folder
         ).pack(fill="x", pady=2)
 
         right = ttk.Frame(
@@ -129,7 +156,8 @@ class FAT32Editor:
             file_frame,
             height=22,
             exportselection=False,
-            selectmode=tk.EXTENDED
+            selectmode=tk.EXTENDED,
+            **self.list_colors
         )
         self.files.pack(side="left", fill="both", expand=True)
 
@@ -143,14 +171,9 @@ class FAT32Editor:
         file_buttons.pack(fill="x", pady=(6, 0))
 
         ttk.Button(
-            file_buttons, text="− Delete Selected File(s)",
-            command=self.delete_file
-        ).pack(side="left")
-
-        ttk.Button(
             file_buttons, text="✎ Rename File…",
             command=self.rename_file
-        ).pack(side="left", padx=(5, 0))
+        ).pack(side="left")
 
         buttons = ttk.Frame(
             root,
@@ -164,11 +187,13 @@ class FAT32Editor:
         ).pack(side="left", padx=(0, 5))
 
         ttk.Button(
-            buttons, text="＋ Add Files…", command=self.add_files
+            buttons, text="＋ Add Files & Folders…",
+            command=self.add_items
         ).pack(side="left", padx=5)
 
         ttk.Button(
-            buttons, text="▣ Add Folder…", command=self.add_folder
+            buttons, text="− Delete Selected",
+            command=self.delete_selected
         ).pack(side="left", padx=5)
 
         ttk.Button(
@@ -256,6 +281,161 @@ class FAT32Editor:
             None
         )
         return match, None
+
+    def rename_image_entry(self, source, destination):
+        source_name = source.rsplit("/", 1)[-1]
+        destination_name = destination.rsplit("/", 1)[-1]
+        source_argument = self.image_path_argument(source)
+        destination_argument = self.image_path_argument(destination)
+
+        if source_name.casefold() != destination_name.casefold():
+            return self.run_mtools(
+                "mren", source_argument, destination_argument
+            )
+
+        parent = self.parent_image_path(source)
+        directories, files, error = self.list_image_directory(parent)
+        if error:
+            return subprocess.CompletedProcess(
+                args=[],
+                returncode=1,
+                stdout="",
+                stderr=error
+            )
+
+        is_directory = any(
+            name.casefold() == source_name.casefold()
+            for name in directories
+        )
+        existing_names = directories + files
+        while True:
+            temporary_name = f"F32REN{uuid.uuid4().hex}"
+            if not any(
+                name.casefold() == temporary_name.casefold()
+                for name in existing_names
+            ):
+                break
+
+        temporary_path = parent.rstrip("/") + "/" + temporary_name
+        temporary_argument = self.image_path_argument(temporary_path)
+        result = self.run_mtools(
+            "mren", source_argument, temporary_argument
+        )
+        if result.returncode != 0:
+            return result
+
+        result = self.run_mtools(
+            "mren", temporary_argument, destination_argument
+        )
+        if result.returncode == 0:
+            if self.image_name_listed(parent, destination_name):
+                return result
+
+            # mren keeps the old case flags of all-lower/all-upper names,
+            # so move the entry back to its temporary name and recreate it.
+            result = self.run_mtools(
+                "mren", destination_argument, temporary_argument
+            )
+            if result.returncode == 0:
+                error = self.recreate_image_entry(
+                    temporary_path, destination, is_directory
+                )
+                if not error:
+                    return subprocess.CompletedProcess(
+                        args=[], returncode=0, stdout="", stderr=""
+                    )
+                result = subprocess.CompletedProcess(
+                    args=[], returncode=1, stdout="", stderr=error
+                )
+
+        rollback = self.run_mtools(
+            "mren", temporary_argument, source_argument
+        )
+        if rollback.returncode != 0:
+            return subprocess.CompletedProcess(
+                args=result.args,
+                returncode=result.returncode,
+                stdout=result.stdout,
+                stderr=(
+                    f"{self.error_text(result)} "
+                    "The temporary name could not be rolled back: "
+                    f"{self.error_text(rollback)}"
+                )
+            )
+
+        return result
+
+    def image_name_listed(self, parent, name):
+        directories, files, error = self.list_image_directory(parent)
+        return not error and name in directories + files
+
+    def recreate_image_entry(self, source, destination, is_directory):
+        """Copy an entry out and back in under an exactly-cased name."""
+        parent = self.parent_image_path(destination)
+        destination_name = destination.rsplit("/", 1)[-1]
+        parent_argument = self.directory_argument(parent)
+        if not parent_argument.endswith("/"):
+            parent_argument += "/"
+
+        try:
+            with tempfile.TemporaryDirectory(
+                prefix="fat32-rename-"
+            ) as work:
+                staged = os.path.join(work, "out")
+                renamed = os.path.join(work, "in")
+                os.makedirs(staged)
+                os.makedirs(renamed)
+                local = os.path.join(renamed, destination_name)
+
+                if is_directory:
+                    result = self.run_mtools(
+                        "mcopy", "-s", "-m",
+                        self.image_path_argument(source), staged
+                    )
+                    copied = os.listdir(staged)
+                    if result.returncode == 0 and len(copied) == 1:
+                        os.rename(
+                            os.path.join(staged, copied[0]), local
+                        )
+                else:
+                    result = self.run_mtools(
+                        "mcopy", "-m",
+                        self.image_path_argument(source), local
+                    )
+                if result.returncode != 0:
+                    return self.error_text(result)
+                if not os.path.exists(local):
+                    return "Could not copy the entry out of the image."
+
+                result = self.run_mtools(
+                    "mcopy", "-s", "-m", local, parent_argument
+                )
+                if result.returncode != 0 or not self.image_name_listed(
+                    parent, destination_name
+                ):
+                    self.run_mtools(
+                        "mdeltree" if is_directory else "mdel",
+                        self.image_path_argument(destination)
+                    )
+                    return (
+                        self.error_text(result)
+                        if result.returncode != 0
+                        else "The new name was not stored with the "
+                             "requested letter case."
+                    )
+        except OSError as exc:
+            return str(exc)
+
+        cleanup = self.run_mtools(
+            "mdeltree" if is_directory else "mdel",
+            self.image_path_argument(source)
+        )
+        if cleanup.returncode != 0:
+            return (
+                "Renamed, but could not remove the temporary entry "
+                f"'{source}': {self.error_text(cleanup)}"
+            )
+        return None
 
     def record_undo(self, label, steps, backup=None):
         if not steps:
@@ -438,11 +618,7 @@ class FAT32Editor:
                     f"Neither '{source}' nor '{destination}' exists."
                 )
 
-            result = self.run_mtools(
-                "mren",
-                self.image_path_argument(source),
-                self.image_path_argument(destination)
-            )
+            result = self.rename_image_entry(source, destination)
             return None if result.returncode == 0 else self.error_text(result)
 
         return f"Unknown undo operation: {kind}"
@@ -613,7 +789,7 @@ class FAT32Editor:
             return
 
         result = self.run_mtools(
-            "mdir", "-b", self.directory_argument()
+            "mdir", "-a", "-b", self.directory_argument()
         )
 
         if result.returncode != 0:
@@ -783,18 +959,16 @@ class FAT32Editor:
             "mdir", "::" + new_path
         )
 
-        if check.returncode == 0:
+        if check.returncode == 0 and (
+            old_name.casefold() != new_name.casefold()
+        ):
             messagebox.showerror(
                 "Name already exists",
                 f"A folder named '{new_name}' already exists."
             )
             return
 
-        result = self.run_mtools(
-            "mren",
-            "::" + old_path,
-            "::" + new_path
-        )
+        result = self.rename_image_entry(old_path, new_path)
 
         if result.returncode != 0:
             messagebox.showerror(
@@ -851,18 +1025,16 @@ class FAT32Editor:
         check = self.run_mtools(
             "mdir", self.image_path_argument(new_path)
         )
-        if check.returncode == 0:
+        if check.returncode == 0 and (
+            old_name.casefold() != new_name.casefold()
+        ):
             messagebox.showerror(
                 "Name already exists",
                 f"A file or folder named '{new_name}' already exists."
             )
             return
 
-        result = self.run_mtools(
-            "mren",
-            self.image_path_argument(old_path),
-            self.image_path_argument(new_path)
-        )
+        result = self.rename_image_entry(old_path, new_path)
         if result.returncode != 0:
             messagebox.showerror(
                 "Cannot rename file",
@@ -881,475 +1053,423 @@ class FAT32Editor:
             }]
         )
 
-    # Delete folders recursively
-
-    def delete_folder(self):
-        if not self.image_ready():
-            return
-
-        selected = self.folders.curselection()
-
-        if not selected:
-            messagebox.showinfo(
-                "Delete Folder",
-                "Select a folder first."
-            )
-            return
-
-        name = self.folders.get(selected[0])
-
-        if name == "..":
-            messagebox.showinfo(
-                "Delete Folder",
-                "You cannot delete '..'."
-            )
-            return
-
-        target = self.folder.rstrip("/") + "/" + name
-
-        confirmed = messagebox.askyesno(
-            "Confirm Folder Deletion",
-            f"Delete '{target}' and ALL files and "
-            "subfolders inside it?\n\n"
-            "This deletion can be undone once.",
-            icon="warning"
-        )
-
-        if not confirmed:
-            return
-
-        backup = tempfile.TemporaryDirectory(
-            prefix="fat32-folder-undo-"
-        )
-        local_backup = os.path.join(backup.name, name)
+    def pick_folders(self, parent):
         try:
-            backup_error = self.backup_folder_contents(
-                target, local_backup
+            result = subprocess.run(
+                ["osascript", "-e", CHOOSE_FOLDERS_SCRIPT],
+                capture_output=True,
+                text=True
             )
-        except OSError as exc:
-            backup.cleanup()
-            messagebox.showerror(
-                "Cannot prepare folder undo",
-                str(exc)
-            )
-            return
+        except OSError:
+            result = None
 
-        if backup_error:
-            backup.cleanup()
-            messagebox.showerror(
-                "Cannot prepare folder undo",
-                backup_error
-            )
-            return
+        if result is not None and result.returncode == 0:
+            return [line for line in result.stdout.splitlines() if line]
+        if result is not None and "-128" in result.stderr:
+            return []
 
-        result = self.run_mtools(
-            "mdeltree", self.image_path_argument(target)
+        folder = filedialog.askdirectory(
+            title="Choose a folder to add", parent=parent
+        )
+        return [folder] if folder else []
+
+    def choose_items_to_add(self):
+        """Collect any number of files and folders; [] means cancelled."""
+        paths = []
+        confirmed = []
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Add Files & Folders")
+        dialog.transient(self.root)
+        dialog.resizable(True, True)
+
+        listbox = tk.Listbox(
+            dialog, width=70, height=12, selectmode=tk.EXTENDED,
+            exportselection=False, **self.list_colors
         )
 
-        if result.returncode != 0:
-            restore_error = self.apply_undo_step({
-                "kind": "restore_folder",
-                "path": target,
-                "backup_path": local_backup
-            })
-            backup.cleanup()
-            error = self.error_text(result)
-            if restore_error:
-                error += f"\nCould not restore deleted data: {restore_error}"
-            messagebox.showerror(
-                "Cannot delete folder",
-                error
-            )
-            return
+        def include(new_paths):
+            for path in new_paths:
+                path = path.rstrip(os.sep) or path
+                if path not in paths:
+                    paths.append(path)
+                    listbox.insert(
+                        tk.END,
+                        ("▣ " if os.path.isdir(path) else "• ") + path
+                    )
 
-        self.refresh()
-        self.record_undo(
-            f"Deleted folder {target}",
-            [{
-                "kind": "restore_folder",
-                "path": target,
-                "backup_path": local_backup
-            }],
-            backup
-        )
+        def choose_files():
+            include(filedialog.askopenfilenames(
+                title="Choose files to add", parent=dialog
+            ))
 
-    # Add files to the current folder or a new folder
+        def choose_folders():
+            include(self.pick_folders(dialog))
 
-    def add_files(self):
+        def remove_selected():
+            for index in reversed(listbox.curselection()):
+                listbox.delete(index)
+                del paths[index]
+
+        def accept():
+            confirmed.append(True)
+            dialog.destroy()
+
+        ttk.Label(
+            dialog,
+            text="Choose any number of files and folders, then press Add."
+        ).pack(anchor="w", padx=10, pady=(10, 5))
+        listbox.pack(fill="both", expand=True, padx=10)
+
+        row = ttk.Frame(dialog)
+        row.pack(fill="x", padx=10, pady=10)
+        ttk.Button(
+            row, text="＋ Files…", command=choose_files
+        ).pack(side="left")
+        ttk.Button(
+            row, text="＋ Folders…", command=choose_folders
+        ).pack(side="left", padx=5)
+        ttk.Button(
+            row, text="Remove", command=remove_selected
+        ).pack(side="left")
+        ttk.Button(
+            row, text="Add", command=accept
+        ).pack(side="right")
+        ttk.Button(
+            row, text="Cancel", command=dialog.destroy
+        ).pack(side="right", padx=5)
+
+        dialog.bind("<Escape>", lambda event: dialog.destroy())
+        dialog.grab_set()
+        self.root.wait_window(dialog)
+
+        return list(paths) if confirmed else []
+
+    def add_items(self):
         if not self.image_ready():
             return
 
-        paths = filedialog.askopenfilenames(
-            title="Choose files to add"
-        )
-
+        paths = self.choose_items_to_add()
         if not paths:
             return
 
-        create_name = simpledialog.askstring(
-            "Choose Destination",
-            "Destination folder name:\n\n"
-            f"Current folder: {self.folder}\n\n"
-            "Leave blank to add files here, or enter a name "
-            "to create a new folder here.",
-            initialvalue="",
-            parent=self.root
-        )
+        context = {
+            "steps": [],
+            "errors": [],
+            "count": 0,
+            "backup": None,
+            "backup_count": 0
+        }
+        progress = self.open_progress(self.count_local_items(paths))
+        context["progress"] = progress
+        try:
+            self.merge_entries(paths, self.folder, context, False)
+        finally:
+            progress["close"]()
 
-        if create_name is None:
+        self.refresh()
+        self.record_undo(
+            "Added items", context["steps"], context["backup"]
+        )
+        self.show_result("Add", context["count"], context["errors"])
+
+    def count_local_items(self, paths):
+        total = 0
+        for path in paths:
+            total += 1
+            if os.path.isdir(path) and not os.path.islink(path):
+                for _, dirs, files in os.walk(path):
+                    total += len(dirs) + len(files)
+        return total
+
+    def open_progress(self, total):
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Adding…")
+        dialog.transient(self.root)
+        dialog.resizable(False, False)
+        dialog.protocol("WM_DELETE_WINDOW", lambda: None)
+
+        label = ttk.Label(dialog, text="Preparing…", width=60)
+        label.pack(padx=15, pady=(15, 5), anchor="w")
+        bar = ttk.Progressbar(
+            dialog, length=420, maximum=max(total, 1)
+        )
+        bar.pack(padx=15)
+        counter = ttk.Label(dialog, text=f"0 of {total}")
+        counter.pack(padx=15, pady=(5, 15), anchor="w")
+
+        dialog.grab_set()
+        dialog.update()
+        done = [0]
+
+        def step(name):
+            done[0] += 1
+            shown = name if len(name) <= 60 else "…" + name[-59:]
+            label.config(text=shown)
+            bar["value"] = done[0]
+            counter.config(text=f"{done[0]} of {total}")
+            dialog.update()
+
+        def close():
+            dialog.grab_release()
+            dialog.destroy()
+
+        return {"step": step, "close": close}
+
+    def merge_entries(self, local_paths, remote_dir, context, inside_new):
+        """Merge local files/folders into remote_dir, overwriting files."""
+        directories, files, error = self.list_image_directory(remote_dir)
+        if error:
+            context["errors"].append(f"{remote_dir}: {error}")
             return
 
-        create_name = create_name.strip()
-        destination_folder = self.folder
-        undo_steps = []
-        undo_backup = None
+        directory_names = {name.casefold(): name for name in directories}
+        file_names = {name.casefold(): name for name in files}
 
-        if create_name:
-            if not self.create_folder_at(
-                self.folder, create_name
-            ):
-                return
+        for path in local_paths:
+            name = os.path.basename(path.rstrip(os.sep))
+            key = name.casefold()
 
-            destination_folder = (
-                "/" + create_name
-                if self.folder == "/"
-                else self.folder.rstrip("/") + "/" + create_name
-            )
-            undo_steps.append({
-                "kind": "delete_folder",
-                "path": destination_folder
-            })
+            if os.path.isdir(path):
+                if os.path.islink(path):
+                    context["errors"].append(
+                        f"{name}: skipped linked folder"
+                    )
+                    continue
+                if key in file_names:
+                    context["errors"].append(
+                        f"{name}: a file with this name already exists"
+                    )
+                    continue
 
-        destination = self.directory_argument(
-            destination_folder
-        )
+                context["progress"]["step"](path)
+                created = key not in directory_names
+                folder_name = directory_names.get(key, name)
+                child_dir = remote_dir.rstrip("/") + "/" + folder_name
 
-        errors = []
-        count = 0
-
-        for index, path in enumerate(paths):
-            file_name = os.path.basename(path)
-            directories, files, listing_error = (
-                self.list_image_directory(destination_folder)
-            )
-            if listing_error:
-                errors.append(f"{file_name}: {listing_error}")
-                continue
-
-            existing_name = next(
-                (
-                    existing for existing in files
-                    if existing.casefold() == file_name.casefold()
-                ),
-                None
-            )
-            backup_path = None
-            image_path = (
-                destination_folder.rstrip("/") + "/" +
-                (existing_name or file_name)
-            )
-            if existing_name:
-                try:
-                    if undo_backup is None:
-                        undo_backup = tempfile.TemporaryDirectory(
-                            prefix="fat32-file-undo-"
+                if created:
+                    if not self.valid_name(name):
+                        context["errors"].append(
+                            f"{name}: invalid FAT32 folder name"
                         )
-                    backup_dir = os.path.join(
-                        undo_backup.name, str(index)
+                        continue
+                    result = self.run_mtools(
+                        "mmd", self.image_path_argument(child_dir)
                     )
-                    os.makedirs(backup_dir, exist_ok=True)
-                    backup_path = os.path.join(
-                        backup_dir, existing_name
-                    )
-                    backup_error = self.backup_image_file(
-                        image_path, backup_path
+                    if result.returncode != 0:
+                        context["errors"].append(
+                            f"{child_dir}: {self.error_text(result)}"
+                        )
+                        continue
+                    directory_names[key] = name
+                    if not inside_new:
+                        context["steps"].append(
+                            {"kind": "delete_folder", "path": child_dir}
+                        )
+
+                try:
+                    children = sorted(
+                        os.path.join(path, child)
+                        for child in os.listdir(path)
                     )
                 except OSError as exc:
-                    errors.append(
-                        f"{file_name}: could not back up the "
-                        f"existing file: {exc}"
-                    )
+                    context["errors"].append(f"{path}: {exc}")
                     continue
 
-                if backup_error:
-                    errors.append(
-                        f"{file_name}: could not back up the "
-                        f"existing file: {backup_error}"
+                self.merge_entries(
+                    children, child_dir, context, inside_new or created
+                )
+                continue
+
+            if key in directory_names:
+                context["errors"].append(
+                    f"{name}: a folder with this name already exists"
+                )
+                continue
+
+            existing = file_names.get(key)
+            if self.copy_file_over(
+                path, remote_dir, existing, context, inside_new
+            ):
+                file_names[key] = existing or name
+
+    def copy_file_over(
+        self, path, remote_dir, existing, context, inside_new
+    ):
+        name = os.path.basename(path)
+        context["progress"]["step"](path)
+        image_path = remote_dir.rstrip("/") + "/" + (existing or name)
+        backup_path = None
+
+        if existing:
+            try:
+                if context["backup"] is None:
+                    context["backup"] = tempfile.TemporaryDirectory(
+                        prefix="fat32-file-undo-"
                     )
-                    continue
-
-            result = self.run_mtools(
-                "mcopy", "-o", path, destination
-            )
-
-            if result.returncode != 0:
-                failure = (
-                    os.path.basename(path)
-                    + ": "
-                    + self.error_text(result)
+                context["backup_count"] += 1
+                backup_dir = os.path.join(
+                    context["backup"].name, str(context["backup_count"])
                 )
-                undo_step = (
-                    {
-                        "kind": "restore_file",
-                        "path": image_path,
-                        "backup_path": backup_path
-                    }
-                    if backup_path
-                    else {"kind": "delete_file", "path": image_path}
+                os.makedirs(backup_dir, exist_ok=True)
+                backup_path = os.path.join(backup_dir, existing)
+                backup_error = self.backup_image_file(
+                    image_path, backup_path
                 )
-                rollback_error = self.apply_undo_step(undo_step)
-                if rollback_error:
-                    undo_steps.append(undo_step)
-                    failure += f"\nRollback failed: {rollback_error}"
-                errors.append(failure)
-            else:
-                undo_steps.append(
-                    {
-                        "kind": "restore_file",
-                        "path": image_path,
-                        "backup_path": backup_path
-                    }
-                    if backup_path
-                    else {"kind": "delete_file", "path": image_path}
+            except OSError as exc:
+                backup_error = str(exc)
+
+            if backup_error:
+                context["errors"].append(
+                    f"{name}: could not back up the existing file: "
+                    f"{backup_error}"
                 )
-                count += 1
+                return False
 
-        self.refresh()
-        self.record_undo(
-            "Added files",
-            undo_steps,
-            undo_backup
+        destination = self.directory_argument(remote_dir)
+        if not destination.endswith("/"):
+            destination += "/"
+        result = self.run_mtools("mcopy", "-o", path, destination)
+
+        step = (
+            {
+                "kind": "restore_file",
+                "path": image_path,
+                "backup_path": backup_path
+            }
+            if backup_path
+            else {"kind": "delete_file", "path": image_path}
         )
-        self.show_result("Add Files", count, errors)
-# Copy an entire local folder into the disk image
-
-    def add_folder(self):
-        if not self.image_ready():
-            return
-
-        source = filedialog.askdirectory(
-            title="Choose a folder to copy into the image"
-        )
-
-        if not source:
-            return
-
-        folder_name = os.path.basename(
-            source.rstrip(os.sep)
-        )
-
-        if not self.valid_name(folder_name):
-            messagebox.showerror(
-                "Invalid folder name",
-                "The source folder name is invalid for FAT32."
-            )
-            return
-
-        target = (
-            self.folder.rstrip("/") + "/" + folder_name
-            if self.folder != "/"
-            else "/" + folder_name
-        )
-
-        check = self.run_mtools("mdir", "::" + target)
-
-        if check.returncode == 0:
-            messagebox.showerror(
-                "Folder already exists",
-                f"{target} already exists in the image."
-            )
-            return
-
-        result = self.run_mtools("mmd", "::" + target)
 
         if result.returncode != 0:
-            messagebox.showerror(
-                "Cannot create folder",
-                self.error_text(result)
-            )
-            return
+            failure = f"{name}: {self.error_text(result)}"
+            rollback_error = self.apply_undo_step(step)
+            if rollback_error:
+                context["steps"].append(step)
+                failure += f"\nRollback failed: {rollback_error}"
+            context["errors"].append(failure)
+            return False
 
-        errors = []
-        count = 0
+        # Files inside a newly created folder are removed with the folder.
+        if backup_path or not inside_new:
+            context["steps"].append(step)
+        context["count"] += 1
+        return True
 
-        for current, dirs, files in os.walk(source):
-            dirs.sort()
-            files.sort()
-
-            relative = os.path.relpath(current, source)
-            remote_dir = target
-
-            if relative != ".":
-                remote_dir += "/" + relative.replace(
-                    os.sep, "/"
-                )
-
-            # Create subfolders, including empty folders.
-            for dirname in dirs:
-                child = remote_dir + "/" + dirname
-
-                result = self.run_mtools(
-                    "mmd", "::" + child
-                )
-
-                if result.returncode != 0:
-                    errors.append(
-                        f"Folder {child}: "
-                        + self.error_text(result)
-                    )
-
-            # Copy files into their corresponding directories.
-            for filename in files:
-                local_path = os.path.join(
-                    current, filename
-                )
-
-                result = self.run_mtools(
-                    "mcopy",
-                    "-o",
-                    local_path,
-                    "::" + remote_dir + "/"
-                )
-
-                if result.returncode != 0:
-                    errors.append(
-                        f"{local_path}: "
-                        + self.error_text(result)
-                    )
-                else:
-                    count += 1
-
-        self.refresh()
-        self.record_undo(
-            f"Added folder {target}",
-            [{"kind": "delete_folder", "path": target}]
-        )
-        self.show_result("Copy Folder", count, errors)
-
-    # Delete files
-
-    def delete_file(self):
+    def delete_selected(self):
         if not self.image_ready():
             return
 
-        selected = self.files.curselection()
-        if not selected:
+        base = self.folder.rstrip("/")
+        items = [
+            ("directory", name, base + "/" + name)
+            for name in (
+                self.folders.get(index)
+                for index in self.folders.curselection()
+            )
+            if name != ".."
+        ] + [
+            ("file", name, base + "/" + name)
+            for name in (
+                self.files.get(index)
+                for index in self.files.curselection()
+            )
+        ]
+
+        if not items:
             messagebox.showinfo(
-                "Delete File",
-                "Select one or more files first."
+                "Delete",
+                "Select one or more files or folders first.",
+                parent=self.root
             )
             return
 
-        names = [self.files.get(index) for index in selected]
-        targets = [
-            self.folder.rstrip("/") + "/" + name
-            for name in names
-        ]
-        listed_targets = "\n".join(
-            f"• {target}" for target in targets[:10]
+        listed = "\n".join(
+            f"• {target}"
+            + (" (folder and contents)" if kind == "directory" else "")
+            for kind, name, target in items[:10]
         )
-        if len(targets) > 10:
-            listed_targets += f"\n…and {len(targets) - 10} more"
+        if len(items) > 10:
+            listed += f"\n…and {len(items) - 10} more"
 
-        confirmed = messagebox.askyesno(
-            "Confirm File Deletion",
-            f"Delete {len(targets)} selected file(s)?\n\n"
-            f"{listed_targets}\n\n"
+        if not messagebox.askyesno(
+            "Confirm Deletion",
+            f"Delete {len(items)} selected item(s)?\n\n{listed}\n\n"
             "This deletion can be undone once.",
             icon="warning",
             parent=self.root
-        )
-        if not confirmed:
+        ):
             return
 
-        backup = tempfile.TemporaryDirectory(prefix="fat32-file-undo-")
-        undo_steps = []
-        errors = []
-        deleted_count = 0
+        backup = tempfile.TemporaryDirectory(prefix="fat32-delete-undo-")
+        steps = []
 
-        for index, target in enumerate(targets):
-            name = names[index]
+        for index, (kind, name, target) in enumerate(items):
             backup_dir = os.path.join(backup.name, str(index))
             local_backup = os.path.join(backup_dir, name)
             try:
                 os.makedirs(backup_dir, exist_ok=True)
-                backup_error = self.backup_image_file(
-                    target, local_backup
+                backup_error = (
+                    self.backup_folder_contents(target, local_backup)
+                    if kind == "directory"
+                    else self.backup_image_file(target, local_backup)
                 )
             except OSError as exc:
-                backup.cleanup()
-                messagebox.showerror(
-                    "Cannot prepare file undo",
-                    str(exc),
-                    parent=self.root
-                )
-                return
+                backup_error = str(exc)
 
             if backup_error:
                 backup.cleanup()
                 messagebox.showerror(
-                    "Cannot prepare file undo",
+                    "Cannot prepare undo",
                     f"Could not back up '{target}':\n{backup_error}",
                     parent=self.root
                 )
                 return
 
-        for index, target in enumerate(targets):
-            step = {
-                "kind": "restore_file",
+            steps.append({
+                "kind": (
+                    "restore_folder" if kind == "directory"
+                    else "restore_file"
+                ),
                 "path": target,
-                "backup_path": os.path.join(
-                    backup.name, str(index), names[index]
-                )
-            }
+                "backup_path": local_backup
+            })
+
+        undo_steps = []
+        errors = []
+
+        for (kind, name, target), step in zip(items, steps):
             result = self.run_mtools(
-                "mdel", self.image_path_argument(target)
+                "mdeltree" if kind == "directory" else "mdel",
+                self.image_path_argument(target)
             )
             if result.returncode == 0:
                 undo_steps.append(step)
-                deleted_count += 1
                 continue
 
             error = self.error_text(result)
             restore_error = self.apply_undo_step(step)
             if restore_error:
                 undo_steps.append(step)
-                error += f"\nCould not restore file: {restore_error}"
+                error += f"\nCould not restore: {restore_error}"
             errors.append(f"{target}: {error}")
 
         self.refresh()
         if undo_steps:
             self.record_undo(
-                f"Deleted {deleted_count} file(s)",
-                undo_steps,
-                backup
+                f"Deleted {len(undo_steps)} item(s)", undo_steps, backup
             )
         else:
             backup.cleanup()
 
-        if errors and undo_steps:
+        if errors:
             messagebox.showwarning(
-                "Some Files Could Not Be Deleted",
-                f"Deleted {deleted_count} file(s). "
-                "Some selections could not be deleted or restored."
-                "\nUndo is available.\n\n"
-                + "\n".join(errors[:10]),
-                parent=self.root
-            )
-        elif errors:
-            messagebox.showerror(
-                "Cannot Delete Files",
+                "Some Items Could Not Be Deleted",
                 "\n".join(errors[:10]),
                 parent=self.root
             )
-            return
 
-        if not errors:
-            messagebox.showinfo(
-                "Delete Files",
-                f"Deleted {len(targets)} file(s). Undo is available.",
-                parent=self.root
-            )
+
 
     # Display operation results
 

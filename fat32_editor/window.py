@@ -1,9 +1,11 @@
 """Tkinter window and application entry point."""
 
 import os
+import subprocess
 import tkinter as tk
 from tkinter import ttk
 
+from .batch_operations import BatchOperationsMixin
 from .config import DEFAULT_IMAGE
 from .file_operations import FileOperationsMixin
 from .folder_operations import FolderOperationsMixin
@@ -13,9 +15,20 @@ from .preferences import PreferencesMixin
 from .undo import UndoMixin
 
 
+def is_dark_mode():
+    try:
+        result = subprocess.run(
+            ["defaults", "read", "-g", "AppleInterfaceStyle"],
+            capture_output=True, text=True, timeout=5
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.stdout.strip().lower() == "dark"
+
+
 class FAT32Editor(
     UndoMixin, PreferencesMixin, NavigationMixin,
-    FileOperationsMixin, FolderOperationsMixin, MtoolsMixin
+    BatchOperationsMixin, FileOperationsMixin, FolderOperationsMixin, MtoolsMixin
 ):
     def __init__(self, root):
         self.root = root
@@ -26,29 +39,36 @@ class FAT32Editor(
         self.undo_action = None
         self.undo_tempdir = None
 
+        dark = is_dark_mode()
+        folder_bg, file_bg, bar_bg, folder_fg, file_fg, list_bg, list_fg = (
+            ("#2b3440", "#262c33", "#20262c", "#e6edf3", "#e6edf3",
+             "#1e2329", "#e6edf3")
+            if dark else
+            ("#eaf2f8", "#f2f4f6", "#e4ebf1", "#18344d", "#253747",
+             "#ffffff", "#000000")
+        )
+        self.list_colors = {
+            "background": list_bg,
+            "foreground": list_fg,
+            "selectbackground": "#3b6ea5" if dark else "#c5dcf2",
+            "selectforeground": "#ffffff" if dark else "#000000",
+            "highlightthickness": 0
+        }
+
         style = ttk.Style(root)
-        style.configure(
-            "FolderPanel.TFrame",
-            background="#eaf2f8"
-        )
-        style.configure(
-            "FilePanel.TFrame",
-            background="#f2f4f6"
-        )
-        style.configure(
-            "ActionBar.TFrame",
-            background="#e4ebf1"
-        )
+        style.configure("FolderPanel.TFrame", background=folder_bg)
+        style.configure("FilePanel.TFrame", background=file_bg)
+        style.configure("ActionBar.TFrame", background=bar_bg)
         style.configure(
             "FolderHeading.TLabel",
-            background="#eaf2f8",
-            foreground="#18344d",
+            background=folder_bg,
+            foreground=folder_fg,
             font=("TkDefaultFont", 10, "bold")
         )
         style.configure(
             "FileHeading.TLabel",
-            background="#f2f4f6",
-            foreground="#253747",
+            background=file_bg,
+            foreground=file_fg,
             font=("TkDefaultFont", 10, "bold")
         )
 
@@ -77,7 +97,8 @@ class FAT32Editor(
         ).pack(anchor="w", pady=(0, 5))
 
         self.folders = tk.Listbox(
-            left, width=27, height=22, exportselection=False
+            left, width=27, height=22, exportselection=False,
+            selectmode=tk.EXTENDED, **self.list_colors
         )
         self.folders.pack(fill="both", expand=True)
         self.folders.bind("<Double-Button-1>", self.open_folder)
@@ -97,10 +118,6 @@ class FAT32Editor(
             command=self.rename_folder
         ).pack(fill="x", pady=2)
 
-        ttk.Button(
-            folder_buttons, text="− Delete Folder",
-            command=self.delete_folder
-        ).pack(fill="x", pady=2)
 
         right = ttk.Frame(
             main, padding=10, style="FilePanel.TFrame"
@@ -123,7 +140,8 @@ class FAT32Editor(
             file_frame,
             height=22,
             exportselection=False,
-            selectmode=tk.EXTENDED
+            selectmode=tk.EXTENDED,
+            **self.list_colors
         )
         self.files.pack(side="left", fill="both", expand=True)
 
@@ -137,14 +155,9 @@ class FAT32Editor(
         file_buttons.pack(fill="x", pady=(6, 0))
 
         ttk.Button(
-            file_buttons, text="− Delete Selected File(s)",
-            command=self.delete_file
-        ).pack(side="left")
-
-        ttk.Button(
             file_buttons, text="✎ Rename File…",
             command=self.rename_file
-        ).pack(side="left", padx=(5, 0))
+        ).pack(side="left")
 
         buttons = ttk.Frame(
             root,
@@ -158,11 +171,13 @@ class FAT32Editor(
         ).pack(side="left", padx=(0, 5))
 
         ttk.Button(
-            buttons, text="＋ Add Files…", command=self.add_files
+            buttons, text="＋ Add Files & Folders…",
+            command=self.add_items
         ).pack(side="left", padx=5)
 
         ttk.Button(
-            buttons, text="▣ Add Folder…", command=self.add_folder
+            buttons, text="− Delete Selected",
+            command=self.delete_selected
         ).pack(side="left", padx=5)
 
         ttk.Button(

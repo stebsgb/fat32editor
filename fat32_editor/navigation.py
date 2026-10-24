@@ -19,7 +19,7 @@ class NavigationMixin:
             return
 
         result = self.run_mtools(
-            "mdir", "-b", self.directory_argument()
+            "mdir", "-a", "-b", self.directory_argument()
         )
 
         if result.returncode != 0:
