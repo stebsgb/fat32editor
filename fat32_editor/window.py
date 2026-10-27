@@ -6,6 +6,7 @@ import tkinter as tk
 from tkinter import ttk
 
 from .batch_operations import BatchOperationsMixin
+from .cleanup_operations import CleanupOperationsMixin
 from .config import DEFAULT_IMAGE
 from .file_operations import FileOperationsMixin
 from .folder_operations import FolderOperationsMixin
@@ -28,7 +29,8 @@ def is_dark_mode():
 
 class FAT32Editor(
     UndoMixin, PreferencesMixin, NavigationMixin,
-    BatchOperationsMixin, FileOperationsMixin, FolderOperationsMixin, MtoolsMixin
+    BatchOperationsMixin, CleanupOperationsMixin, FileOperationsMixin,
+    FolderOperationsMixin, MtoolsMixin
 ):
     def __init__(self, root):
         self.root = root
@@ -194,6 +196,11 @@ class FAT32Editor(
 
         ttk.Button(
             buttons, text="⟳ Refresh", command=self.refresh
+        ).pack(side="left", padx=5)
+
+        ttk.Button(
+            buttons, text="✕ Clean ._ Files",
+            command=self.clean_macos_metadata
         ).pack(side="left", padx=5)
 
         self.undo_button = ttk.Button(

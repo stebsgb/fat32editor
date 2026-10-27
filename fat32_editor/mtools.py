@@ -266,6 +266,11 @@ class MtoolsMixin:
             and not name.endswith((" ", "."))
     )
 
+    @staticmethod
+    def is_macos_metadata(name):
+        """AppleDouble sidecar files macOS writes to non-Mac volumes."""
+        return name.startswith("._")
+
     def get_entries(self, output):
         directories = []
         files = []

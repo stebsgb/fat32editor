@@ -141,10 +141,15 @@ class BatchOperationsMixin:
     def count_local_items(self, paths):
         total = 0
         for path in paths:
+            if self.is_macos_metadata(os.path.basename(path.rstrip(os.sep))):
+                continue
             total += 1
             if os.path.isdir(path) and not os.path.islink(path):
                 for _, dirs, files in os.walk(path):
-                    total += len(dirs) + len(files)
+                    total += (
+                        len([d for d in dirs if not self.is_macos_metadata(d)])
+                        + len([f for f in files if not self.is_macos_metadata(f)])
+                    )
         return total
 
     def open_progress(self, total):
@@ -193,6 +198,9 @@ class BatchOperationsMixin:
 
         for path in local_paths:
             name = os.path.basename(path.rstrip(os.sep))
+            if self.is_macos_metadata(name):
+                # Never copy macOS ._ sidecar files onto the SD card.
+                continue
             key = name.casefold()
 
             if os.path.isdir(path):
